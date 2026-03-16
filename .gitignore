@@ -1,1 +1,4 @@
+.env
 .env.example
+credentials/service_account.json
+bird_counter.log
