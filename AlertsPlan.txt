@@ -1,0 +1,279 @@
+# Bird Counter Automation — Workflow Plan
+
+**Automated Alert System for Truck Unloading Monitoring**
+**Google Drive → CSV Processing → Email & WhatsApp Alerts**
+
+WAT Framework (Workflows • Agents • Tools) | Version 1.0 — March 2026
+
+---
+
+## 1. Project Overview
+
+### 1.1 What This System Does
+
+An Autonics CT Series counter machine counts birds as each truck unloads at the poultry processing facility. The counter software (DAQMaster) exports a CSV file for every truck and saves it to a designated Google Drive folder. Each CSV file represents one complete truck unloading session.
+
+This automation monitors that Google Drive folder, reads each new CSV as it arrives, analyzes the data against three alert conditions, and sends notifications via Email and WhatsApp whenever a condition is violated.
+
+### 1.2 CSV File Structure (from Autonics DAQMaster)
+
+The CSV exported by the counter machine has a **14-row metadata header** followed by the actual data rows. Below is the structure after skipping the header:
+
+| Column | Example Value | Description |
+|--------|---------------|-------------|
+| **Date** | 2026-03-06 | The date the truck was unloaded |
+| **Time** | 17:42:23:869 | Timestamp with milliseconds (HH:MM:SS:ms), recorded roughly every 1 second |
+| **Data** | 1523 | Cumulative running count of birds passed through the counter |
+
+### 1.3 Key Observations from Sample File (CP202620260306173641)
+
+| Metric | Value |
+|--------|-------|
+| Total birds counted | 2,828 |
+| Recording start time | 17:36:42 |
+| Recording end time | 18:45:24 |
+| Total duration | 68.7 minutes |
+| Birds per minute | 41.2 birds/min (below 60 threshold) |
+| Largest gap (no counting) | 14.3 minutes at count 2,090 (Alert 2 trigger) |
+| Total data rows | 4,090 rows (~1 reading per second) |
+
+> **Important:** The Data column is a **cumulative counter**, not an individual per-second count. It starts at 0 and increments as birds pass through. The final value in the Data column is the total bird count for that truck.
+
+---
+
+## 2. The Three Alerts — Complete Logic
+
+### 2.1 Alert 1: Low Unloading Speed (Line Productivity)
+
+| Property | Detail |
+|----------|--------|
+| **Purpose** | Detect when a truck is being unloaded too slowly |
+| **Formula** | Speed = Total Birds (max Data value) ÷ Total Time (minutes from first bird to last row) |
+| **Threshold** | If Speed **< 60 birds per minute** → SEND ALERT |
+| **When checked** | Once, after the entire CSV file is fully read (end of truck unloading) |
+
+#### Calculation Steps:
+
+1. Find the first row where Data > 0 (first bird detected). Record its Time as `start_time`.
+2. Find the last row in the file. Its Data value is `total_birds`, and its Time is `end_time`.
+3. Calculate `total_minutes = (end_time − start_time)` in minutes.
+4. Calculate `speed = total_birds ÷ total_minutes`.
+5. If `speed < 60` → trigger Alert 1.
+
+#### Sample File Result:
+
+2,828 birds ÷ 68.7 minutes = **41.2 birds/min** → **ALERT 1 TRIGGERED** (below 60 threshold)
+
+#### Alert 1 Message Template:
+
+| Field | Value |
+|-------|-------|
+| Subject | ⚠ ALERT: Low Unloading Speed Detected |
+| Truck File | `{filename}` |
+| Date | `{date}` |
+| Total Birds | `{total_birds}` |
+| Total Time | `{total_minutes}` minutes |
+| Speed | `{speed}` birds/min (threshold: 60) |
+
+---
+
+### 2.2 Alert 2: Counting Break Detected (Stall During Unloading)
+
+| Property | Detail |
+|----------|--------|
+| **Purpose** | Detect when the counter stops receiving birds mid-unloading |
+| **Condition** | After at least 100 birds counted AND Data stays flat for 10+ consecutive minutes |
+| **Threshold** | Gap ≥ 10 minutes with no new bird count after 100+ birds → SEND ALERT |
+| **When checked** | Scanned across all rows of the CSV after file is fully read |
+
+#### Detection Logic:
+
+1. Group consecutive rows that have the same Data value (cumulative count stays flat).
+2. For each group: calculate `duration = last timestamp − first timestamp`.
+3. Filter for groups where: Data value ≥ 100 **AND** duration ≥ 10 minutes.
+4. Each qualifying group is one Alert 2 event. There can be **multiple per file**.
+
+#### Sample File Result:
+
+At bird count 2,090, the counter was flat from 18:18:12 to 18:32:30 (**14.3 minutes**) → **ALERT 2 TRIGGERED**
+
+#### Alert 2 Message Template:
+
+| Field | Value |
+|-------|-------|
+| Subject | ⚠ ALERT: Counting Break Detected During Unloading |
+| Truck File | `{filename}` |
+| Break At Count | `{bird_count}` birds |
+| Break Start | `{break_start_time}` |
+| Break End | `{break_end_time}` |
+| Break Duration | `{duration}` minutes (threshold: 10 min) |
+
+---
+
+### 2.3 Alert 3: Excessive Gap Between Trucks
+
+| Property | Detail |
+|----------|--------|
+| **Purpose** | Detect too much idle time between two consecutive trucks |
+| **Condition** | Compare last timestamp of previous truck CSV with first timestamp of new truck CSV |
+| **Threshold** | Gap **> 20 minutes** → SEND ALERT |
+| **Requires** | Persistent storage of last truck's final timestamp (saved after each file) |
+
+#### Detection Logic:
+
+1. When processing current file, read the first Data row's Time as `new_truck_start`.
+2. Retrieve stored `previous_truck_end` from `state.json`.
+3. Calculate `gap = new_truck_start − previous_truck_end`.
+4. If `gap > 20 minutes` → trigger Alert 3.
+5. Save current file's last timestamp as new `previous_truck_end` for next file.
+
+#### Examples:
+
+- Truck A last bird at 12:05 AM, Truck B first bird at 12:15 AM. Gap = 10 min → **No alert.**
+- Truck A last bird at 12:05 AM, Truck B first bird at 12:30 AM. Gap = 25 min → **ALERT 3 TRIGGERED.**
+
+#### Alert 3 Message Template:
+
+| Field | Value |
+|-------|-------|
+| Subject | ⚠ ALERT: Excessive Wait Between Trucks |
+| Previous Truck | `{prev_filename}` — ended at `{prev_end_time}` |
+| Current Truck | `{curr_filename}` — started at `{curr_start_time}` |
+| Gap Duration | `{gap}` minutes (threshold: 20 min) |
+
+---
+
+## 3. WAT Framework Architecture
+
+### 3.1 Directory Structure
+
+Following the WAT framework convention:
+
+```
+project/
+├── workflows/
+│   └── bird_counter_monitor.md    # Main workflow SOP: Drive polling, CSV parsing, 3 alert checks, notification dispatch
+├── tools/
+│   ├── fetch_gdrive_csv.py        # Polls Google Drive folder for new CSV files, downloads them
+│   ├── parse_counter_csv.py       # Reads raw CSV, skips 14-row header, outputs clean DataFrame
+│   ├── check_alert_1.py           # Calculates unloading speed, returns alert status + metrics
+│   ├── check_alert_2.py           # Scans for counting breaks (10+ min gap after 100+ birds)
+│   ├── check_alert_3.py           # Compares inter-truck gap against 20 min threshold
+│   ├── send_email_alert.py        # Sends formatted email via SMTP/API
+│   ├── send_whatsapp_alert.py     # Sends WhatsApp message via API (Twilio/WhatsApp Business)
+│   └── state_manager.py           # Reads/writes persistent state (last truck timestamp, processed files)
+├── .env                           # API keys and credentials
+├── .tmp/                          # Downloaded CSVs and intermediate processing files
+├── state.json                     # Persistent state: last processed file, last truck end time
+├── credentials.json               # Google OAuth (gitignored)
+└── token.json                     # Google OAuth token (gitignored)
+```
+
+### 3.2 Complete Workflow Execution Sequence
+
+This is the step-by-step sequence the agent follows every time the workflow triggers:
+
+#### Phase 1: Trigger & Fetch
+
+1. Poll Google Drive folder for new CSV files (compare against processed files list in `state.json`).
+2. If new file found → download to `.tmp/` folder. If no new file → exit (wait for next poll).
+
+#### Phase 2: Parse CSV
+
+3. Run `parse_counter_csv.py`: skip 14 header rows, parse Date/Time/Data columns, convert Data to numeric.
+4. Output: clean structured data ready for analysis.
+
+#### Phase 3: Run All Three Alert Checks
+
+5. Run `check_alert_1.py` → returns `{triggered, speed, total_birds, total_minutes}`.
+6. Run `check_alert_2.py` → returns `[{triggered, bird_count, break_start, break_end, duration}, ...]`.
+7. Run `check_alert_3.py` → reads `previous_truck_end` from `state.json`, returns `{triggered, gap_minutes}`.
+
+#### Phase 4: Send Notifications
+
+8. For each triggered alert: compose message with relevant data fields.
+9. Run `send_email_alert.py` with the message payload.
+10. Run `send_whatsapp_alert.py` with the message payload.
+
+#### Phase 5: Update State
+
+11. Save current file's last timestamp as `previous_truck_end` in `state.json`.
+12. Add filename to processed files list.
+13. Clean up `.tmp/` folder.
+
+---
+
+## 4. Credentials & Configuration Required
+
+The following credentials need to be provided before the automation can go live. All will be stored in the `.env` file:
+
+| Service | Credential(s) Needed | Notes |
+|---------|----------------------|-------|
+| **Google Drive** | OAuth `credentials.json` OR Service Account key | For reading CSV files from designated Drive folder |
+| **Google Drive** | `GDRIVE_FOLDER_ID` | ID of the specific folder where CSVs are uploaded |
+| **Email (SMTP)** | `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASSWORD` | Or Gmail API with OAuth. Also need `ALERT_EMAIL_TO` |
+| **WhatsApp** | `WHATSAPP_API_KEY`, `PHONE_ID`, `RECIPIENT` | Twilio or WhatsApp Business API credentials |
+| **Polling** | `POLL_INTERVAL_SECONDS` | How often to check for new files (recommended: 60–120 sec) |
+
+---
+
+## 5. Edge Cases & Error Handling
+
+| Scenario | How We Handle It |
+|----------|------------------|
+| First file ever (no previous truck) | Skip Alert 3 check. Save this file's last timestamp as baseline. |
+| CSV has no bird data (all zeros) | Skip Alert 1 and 2. Log warning. Still save timestamp for Alert 3. |
+| Multiple files arrive at once | Process in chronological order. Run all 3 alerts for each file sequentially. |
+| Counter resets mid-file | Detect if Data decreases. Treat max before reset as subtotal and add subsequent. |
+| Google Drive API rate limit | Exponential backoff. Log error. Retry on next poll cycle. |
+| Email/WhatsApp send failure | Log failure. Queue for retry. Do NOT block file processing. |
+| Duplicate file detection | Track processed filenames in `state.json`. Skip already processed. |
+| Files spanning midnight | Use full datetime (Date + Time) for all calculations. |
+
+---
+
+## 6. Corrections to Your Understanding
+
+Your understanding is mostly correct. Here are the specific adjustments:
+
+**❌ Correction 1 — Alert 1 is birds/minute, not percentage:**
+You said "if greater than 60%" — the metric is birds per minute, not a percentage. Formula: `total birds ÷ total minutes`. If result < 60 birds/min, send alert. If 60+, no alert needed.
+
+**❌ Correction 2 — "Words" should be "Birds":**
+You mentioned "2,000 words." The Data column contains bird counts (numbers), not words. The max value = total birds counted.
+
+**❌ Correction 3 — Alert 2's 100-bird minimum:**
+The 100 is a prerequisite, not the break. Logic: once 100+ birds counted cumulatively, THEN if counter stays flat for 10+ minutes, alert fires. Gaps during the first 100 birds are ignored (initial loading phase).
+
+**✅ Confirmed Correct:**
+Your Alert 3 understanding (inter-truck gap) and the 12:05/12:15 example are exactly right.
+
+---
+
+## 7. One-Shot Execution Plan for Agentic Platform
+
+Below is the exact sequence your agentic workflow platform should execute:
+
+| # | Action | Tool | Input | Output |
+|---|--------|------|-------|--------|
+| 1 | Check new files | `fetch_gdrive_csv.py` | `GDRIVE_FOLDER_ID`, `state.json` | New CSV files downloaded |
+| 2 | Parse CSV | `parse_counter_csv.py` | CSV file path | Clean DataFrame |
+| 3 | Alert 1 | `check_alert_1.py` | Parsed DataFrame | `{triggered, speed, birds, min}` |
+| 4 | Alert 2 | `check_alert_2.py` | Parsed DataFrame | `[{triggered, count, times}]` |
+| 5 | Alert 3 | `check_alert_3.py` | DataFrame + `state.json` | `{triggered, gap_minutes}` |
+| 6 | Send Alerts | `send_email` + `send_whatsapp` | Alert results from 3–5 | Delivery confirmation |
+| 7 | Update State | `state_manager.py` | Last timestamp, filename | Updated `state.json` |
+
+---
+
+## 8. Summary of Alert Thresholds
+
+| Alert | What It Detects | Threshold | Scope |
+|-------|----------------|-----------|-------|
+| **Alert 1** | Slow unloading speed | < 60 birds/minute | Per truck (single file) |
+| **Alert 2** | Counting break mid-unloading | ≥10 min flat after 100+ birds | Per truck (single file) |
+| **Alert 3** | Idle time between trucks | > 20 min gap | Cross-file (file to file) |
+
+---
+
+This plan is designed for one-shot execution on your agentic workflow platform. Once you provide the Google Drive, Email, and WhatsApp credentials, the tools can be built and tested in sequence following this exact blueprint.

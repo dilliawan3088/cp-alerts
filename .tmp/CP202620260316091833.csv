@@ -1,0 +1,19 @@
+﻿
+Date,3/16/2026 9:18:33 AM
+Title,C:\Program Files\Autonics\DAQMaster\Device\autonics.ct6.dev
+Company,Autonics
+Worker,
+Description,Programmable Counter(Timer)
+
+Device,CT Series,,
+Address,1,,
+Ch Name,Present Value,,
+Tag Name,COM4=VCP0_1_Present Value,,
+Unit,,,
+Description,,,
+
+Date,Time,Data,
+
+3/16/2026,09:18:34:410,6402,
+3/16/2026,09:18:35:418,6402,
+3/16/2026,09:18:36:431,0,
