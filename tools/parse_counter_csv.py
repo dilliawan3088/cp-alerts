@@ -13,6 +13,7 @@ IMPORTANT:
 import os
 import logging
 import pandas as pd
+import gc
 from datetime import datetime, timedelta
 
 logger = logging.getLogger(__name__)
@@ -101,6 +102,9 @@ def parse_counter_file(filepath: str) -> pd.DataFrame:
     # Convert bird count to numeric; coerce errors to NaN
     df["bird_count"] = pd.to_numeric(df_raw[data_col], errors="coerce")
 
+    # Clear raw data early to save memory
+    del df_raw
+
     # Drop rows where time is missing or not parseable
     df = df[df["time_str"].notna() & (df["time_str"] != "") & (df["time_str"] != "nan")]
 
@@ -137,4 +141,5 @@ def parse_counter_file(filepath: str) -> pd.DataFrame:
         f"max birds = {df['bird_count'].max()}"
     )
 
+    gc.collect()
     return df

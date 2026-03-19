@@ -2,3 +2,9 @@
 .env.example
 credentials/service_account.json
 bird_counter.log
+
+# Node / Trigger.dev
+node_modules/
+dist/
+.trigger/
+*.tsbuildinfo

@@ -1,7 +1,10 @@
 """
 tools/state_manager.py
 Manages persistent state for the Bird Counter Automation.
-State is stored in state.json at the project root.
+State is stored in state.json at the project root by default.
+
+For cloud deployments (e.g. Trigger.dev), set the STATE_FILE_PATH
+environment variable to override the path (e.g. /tmp/state.json).
 """
 
 import json
@@ -9,7 +12,9 @@ import os
 import logging
 from datetime import datetime
 
-STATE_FILE = os.path.join(os.path.dirname(os.path.dirname(__file__)), "state.json")
+# Allow override via env var for cloud/serverless deployments
+_default_state_file = os.path.join(os.path.dirname(os.path.dirname(__file__)), "state.json")
+STATE_FILE = os.environ.get("STATE_FILE_PATH", _default_state_file)
 
 logger = logging.getLogger(__name__)
 

@@ -1,0 +1,20 @@
+{
+  "name": "cp-alerts-trigger",
+  "version": "1.0.0",
+  "description": "Bird Counter Alert Automation — Trigger.dev scheduled tasks",
+  "scripts": {
+    "dev": "npx trigger.dev@latest dev",
+    "deploy": "npx trigger.dev@latest deploy"
+  },
+  "dependencies": {
+    "@trigger.dev/sdk": "4.4.3"
+  },
+  "devDependencies": {
+    "@trigger.dev/build": "4.4.3",
+    "@types/node": "^20.11.0",
+    "typescript": "^5.3.3"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}

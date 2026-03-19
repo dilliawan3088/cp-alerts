@@ -28,12 +28,11 @@ from tools.state_manager import (
     is_file_processed,
     mark_file_processed,
 )
-from tools.fetch_gdrive_csv import fetch_new_csvs
+from tools.fetch_gdrive_csv import fetch_new_csvs, move_file_to_processed
 from tools.parse_counter_csv import parse_counter_file
 from tools.check_alert_1 import check_alert_1
 from tools.check_alert_2 import check_alert_2
 from tools.check_alert_3 import check_alert_3
-from tools.send_email_alert import send_email_alert
 from tools.send_whatsapp_alert import send_whatsapp_alert
 
 # ── Logging setup ────────────────────────────────────────────────────────────
@@ -53,17 +52,10 @@ logger = logging.getLogger("main")
 # ── Helper: send both email and WhatsApp for a triggered alert ────────────────
 def notify_all(alert_type: str, alert_data: dict, filename: str):
     """
-    Send both email and WhatsApp for a triggered alert.
-    Errors in notification are logged but never raise.
+    Send WhatsApp notification for a triggered alert.
+    Errors are logged but never raise.
     """
     logger.info(f"Sending notifications for {alert_type} — file: {filename}")
-
-    try:
-        result = send_email_alert(alert_type, alert_data, filename)
-        if not result["sent"]:
-            logger.error(f"Email failed ({alert_type}): {result['error']}")
-    except Exception as e:
-        logger.error(f"Unexpected error sending email ({alert_type}): {e}")
 
     try:
         result = send_whatsapp_alert(alert_type, alert_data, filename)
@@ -155,9 +147,9 @@ def run_once():
     logger.info("═══════════════ Poll Cycle Starting ═══════════════")
     state = load_state()
 
-    # Fetch new files
+    # Fetch new files (limit per cycle to avoid OOM)
     try:
-        new_files = fetch_new_csvs(state.get("processed_files", []))
+        new_files = fetch_new_csvs(state.get("processed_files", []), limit=10)
     except Exception as e:
         logger.error(f"fetch_new_csvs failed: {e}. Aborting cycle.")
         return
@@ -166,12 +158,13 @@ def run_once():
         logger.info("No new files found. Cycle complete.")
         return
 
-    logger.info(f"Found {len(new_files)} new file(s): {[os.path.basename(f) for f in new_files]}")
-
     # Process each file in chronological order (already sorted by fetch_new_csvs)
     for filepath in new_files:
+        filename = os.path.basename(filepath)
         try:
             state = process_file(filepath, state)
+            # Move the file to Processed/ on Google Drive as permanent state
+            move_file_to_processed(filename)
         except Exception as e:
             logger.error(f"Unhandled error processing {filepath}: {e}")
 
