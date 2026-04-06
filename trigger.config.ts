@@ -3,7 +3,7 @@ import { aptGet, additionalFiles } from "@trigger.dev/build/extensions/core";
 
 
 export default defineConfig({
-  project: "proj_goemmgnyudhmomjfmrsb",
+  project: "proj_lbkquzcnekbwitxwacay",
   runtime: "node",
   logLevel: "info",
   retries: {
