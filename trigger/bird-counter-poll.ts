@@ -1,7 +1,15 @@
-import { schedules, logger } from "@trigger.dev/sdk/v3";
+import { schedules, logger, metadata } from "@trigger.dev/sdk/v3";
 import { execFileSync } from "child_process";
 import * as fs from "fs";
 import * as path from "path";
+
+// Define a type for our state to satisfy TypeScript
+interface AutomationState {
+  last_processed_file?: string | null;
+  previous_truck_end?: string | null;
+  processed_files?: string[];
+  [key: string]: any; // This satisfies the 'DeserializedJson' requirement
+}
 
 /**
  * Bird Counter Alert Automation — Trigger.dev Scheduled Task
@@ -113,8 +121,33 @@ export const birdCounterPoll = schedules.task({
     // Step 1: Write service account JSON
     writeServiceAccountJson();
 
-    // Step 2: Execute Python poll cycle
+    // Step 2: Restore state from Metadata if it exists
+    try {
+      const currentMetadata = await metadata.get(ctx.task.id);
+      if (currentMetadata && (currentMetadata as any).state) {
+        const stateData = (currentMetadata as any).state;
+        logger.info("💾 Restoring state from Trigger.dev metadata", { state: stateData });
+        fs.writeFileSync(STATE_PATH, JSON.stringify(stateData), "utf8");
+      } else {
+        logger.info("💾 No existing metadata state found — starting fresh.");
+      }
+    } catch (err) {
+      logger.warn("⚠ Failed to restore metadata state", { error: String(err) });
+    }
+
+    // Step 3: Execute Python poll cycle
     runPollCycle();
+
+    // Step 4: Persist state back to Metadata
+    try {
+      if (fs.existsSync(STATE_PATH)) {
+        const newState = JSON.parse(fs.readFileSync(STATE_PATH, "utf8")) as AutomationState;
+        await metadata.set(ctx.task.id, { state: newState });
+        logger.info("💾 State saved to Trigger.dev metadata.");
+      }
+    } catch (err) {
+      logger.warn("⚠ Failed to save metadata state", { error: String(err) });
+    }
 
     logger.info("✅ Poll cycle complete", {
       nextRun: payload.upcoming[0]?.toISOString(),
