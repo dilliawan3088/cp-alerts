@@ -34,6 +34,7 @@ from tools.check_alert_1 import check_alert_1
 from tools.check_alert_2 import check_alert_2
 from tools.check_alert_3 import check_alert_3
 from tools.send_whatsapp_alert import send_whatsapp_alert
+from tools.db_upload import upload_alert_to_neon, upload_raw_data_to_neon
 
 # ── Logging setup ────────────────────────────────────────────────────────────
 LOG_FILE = os.path.join(os.path.dirname(__file__), "bird_counter.log")
@@ -89,6 +90,8 @@ def process_file(filepath: str, state: dict) -> dict:
         last_ts = None
     else:
         last_ts = df["datetime"].iloc[-1]
+        # Upload all raw rows to the DB for the dashboard
+        upload_raw_data_to_neon(filename, df)
 
     # ── Step 2: Alert 1 ──────────────────────────────────────────────────────
     try:
@@ -96,6 +99,7 @@ def process_file(filepath: str, state: dict) -> dict:
         if a1.get("triggered"):
             alerts_fired.append("Alert1-LowSpeed")
             notify_all("alert_1", a1, filename)
+            upload_alert_to_neon(filename, "Speed", a1.get("total_birds", 0), a1)
         if a1.get("warning"):
             logger.warning(f"Alert 1 warning: {a1['warning']}")
     except Exception as e:
@@ -108,6 +112,7 @@ def process_file(filepath: str, state: dict) -> dict:
             if brk.get("triggered"):
                 alerts_fired.append(f"Alert2-Break#{i}")
                 notify_all("alert_2", brk, filename)
+                upload_alert_to_neon(filename, "Break", brk.get("bird_count", 0), brk)
     except Exception as e:
         logger.error(f"Alert 2 check failed for {filename}: {e}")
 
@@ -117,6 +122,7 @@ def process_file(filepath: str, state: dict) -> dict:
         if a3.get("triggered"):
             alerts_fired.append("Alert3-TruckGap")
             notify_all("alert_3", a3, filename)
+            upload_alert_to_neon(filename, "Gap", 0, a3)
         if a3.get("is_first_file"):
             logger.info("Alert 3: first file — gap check skipped.")
     except Exception as e:
